@@ -1,0 +1,244 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  name        String
+  email       String   @unique
+  password    String?
+  permissions String[] @default(["DEVELOPER"])
+  githubId    String?  @unique
+  avatarUrl   String?
+  developerId String?  @unique
+
+  developer          Developer?        @relation(fields: [developerId], references: [id])
+  reportedViolations ViolationReport[] @relation("Reporter")
+  approvedViolations ViolationReport[] @relation("Approver")
+  auditLogs          AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Developer {
+  id             String  @id @default(cuid())
+  employeeId     String  @unique
+  name           String
+  githubUsername String?
+  department     String
+  team           String?
+  active         Boolean @default(true)
+
+  user        User?
+  violations  ViolationReport[]
+  assignments ProjectAssignment[]
+  codeOwners  CodeOwner[]
+  attendances Attendance[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model Project {
+  id          String  @id @default(cuid())
+  projectCode String  @unique
+  name        String
+  type        String?
+  description String?
+  active      Boolean @default(true)
+
+  violations  ViolationReport[]
+  assignments ProjectAssignment[]
+  codeOwners  CodeOwner[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model ViolationRule {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  category    String
+  description String
+  fineAmount  Float
+  active      Boolean @default(true)
+
+  items ViolationItem[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model ViolationReport {
+  id            String  @id @default(cuid())
+  projectId     String
+  developerId   String
+  reporterId    String
+  approverId    String?
+  prLink        String
+  evidence      String?
+  status        String  @default("DRAFT")
+  totalFine     Float   @default(0)
+  rejectionNote String?
+
+  project   Project   @relation(fields: [projectId], references: [id])
+  developer Developer @relation(fields: [developerId], references: [id])
+  reporter  User      @relation("Reporter", fields: [reporterId], references: [id])
+  approver  User?     @relation("Approver", fields: [approverId], references: [id])
+
+  items     ViolationItem[]
+  auditLogs AuditLog[]
+
+  // A violation is covered by at most one payment; a payment can cover many violations.
+  paymentId String?
+  payment   Payment? @relation(fields: [paymentId], references: [id])
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model Payment {
+  id               String    @id @default(cuid())
+  amount           Float // total covering all linked violations
+  screenshotBase64 String?
+  reference        String?
+  note             String?
+  status           String    @default("SUBMITTED") // SUBMITTED | CONFIRMED | REJECTED
+  submittedById    String
+  confirmedById    String?
+  rejectionNote    String?
+  submittedAt      DateTime  @default(now())
+  confirmedAt      DateTime?
+
+  violations ViolationReport[]
+}
+
+model ViolationItem {
+  id         String  @id @default(cuid())
+  reportId   String
+  ruleId     String
+  multiplier Int     @default(1)
+  fineAmount Float
+  notes      String?
+
+  report ViolationReport @relation(fields: [reportId], references: [id])
+  rule   ViolationRule   @relation(fields: [ruleId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model AssignmentCycle {
+  id          String   @id @default(cuid())
+  name        String
+  startDate   DateTime
+  endDate     DateTime
+  status      String   @default("DRAFT")
+  generatedBy String?
+
+  assignments ProjectAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ProjectAssignment {
+  id          String  @id @default(cuid())
+  projectId   String
+  cycleId     String
+  developerId String
+  locked      Boolean @default(false)
+  generatedBy String?
+
+  project   Project         @relation(fields: [projectId], references: [id])
+  cycle     AssignmentCycle @relation(fields: [cycleId], references: [id])
+  developer Developer       @relation(fields: [developerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, cycleId, developerId])
+}
+
+model CodeOwner {
+  id          String    @id @default(cuid())
+  projectId   String
+  developerId String
+  startDate   DateTime
+  endDate     DateTime?
+  active      Boolean   @default(true)
+
+  project   Project   @relation(fields: [projectId], references: [id])
+  developer Developer @relation(fields: [developerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model FinanceAccount {
+  id            String   @id @default(cuid())
+  accountName   String
+  accountNumber String
+  bankName      String?
+  notes         String?
+  qrCodeBase64  String?
+  createdBy     String
+  updatedBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String  @id @default(cuid())
+  entityType String
+  entityId   String
+  action     String
+  details    String?
+  userId     String
+  reportId   String?
+
+  user   User             @relation(fields: [userId], references: [id])
+  report ViolationReport? @relation(fields: [reportId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model PrSession {
+  id         String   @id @default(cuid())
+  date       DateTime @db.Date
+  title      String?
+  status     String   @default("SCHEDULED") // SCHEDULED | CANCELLED
+  cancelNote String?
+  hostedBy   String   // userId of creator
+
+  attendances Attendance[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Attendance {
+  id          String  @id @default(cuid())
+  sessionId   String
+  developerId String
+  status      String  @default("PENDING") // PENDING | PRESENT | ABSENT | EXCUSED
+  reason      String?
+
+  session   PrSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  developer Developer @relation(fields: [developerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([sessionId, developerId])
+}

@@ -1,0 +1,357 @@
+openapi: 3.0.3
+info:
+  title: SELISE Fine System — GitHub Sync API
+  description: |
+    Authenticated API for GitHub Actions workflows to report violations.
+
+    ## Authentication
+
+    Every request must include one of:
+
+    - **Bearer token** — `Authorization: Bearer <GITHUB_SYNC_SECRET>`
+    - **Basic Auth** — `Authorization: Basic base64(<GITHUB_SYNC_USER>:<GITHUB_SYNC_SECRET>)`
+      (`GITHUB_SYNC_USER` defaults to `github`)
+
+    ## Team resolution
+
+    The violation is tagged to a team using the following priority:
+
+    1. `teamSlug` field in the request body (explicit)
+    2. Auto-detected when the developer belongs to exactly **one** team
+    3. `null` (global) when the developer belongs to no teams
+
+    If the developer belongs to **multiple teams** and `teamSlug` is omitted, the request is rejected with `422`.
+
+    ## Project & rule upsert
+
+    Projects are upserted by the `org/repo` slug derived from `prLink`, so they do not need
+    to be pre-registered. Rules are upserted by `ruleCode`; their description and fine amount
+    are updated on each call.
+
+    ## Dual-fine (SEL_PULL008)
+
+    When any item carries rule code `SEL_PULL008` and `approverGithubUsername` is provided,
+    a second violation of **Nu. 50** is automatically created for the PR approver.
+  version: 2.0.0
+
+servers:
+  - url: https://{host}/api/github
+    variables:
+      host:
+        default: your-deployment-host
+
+security:
+  - BearerToken: []
+  - BasicAuth: []
+
+paths:
+  /violations:
+    get:
+      summary: Check existing violations for a PR
+      description: Returns all non-deleted violation reports linked to the given PR URL.
+      parameters:
+        - name: prLink
+          in: query
+          required: true
+          schema:
+            type: string
+            example: https://github.com/selise/admin/pull/99
+      responses:
+        "200":
+          description: List of violations for the PR (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ViolationSummary"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+    post:
+      summary: Create a violation from a GitHub workflow
+      description: |
+        Creates a violation report. The project is upserted by the `org/repo` slug
+        derived from `prLink`. Rules are upserted by `ruleCode`.
+
+        If any item uses `SEL_PULL008` and `approverGithubUsername` is set,
+        an approver fine of **Nu. 50** is automatically created as a separate report.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateViolationRequest"
+            examples:
+              single_rule:
+                summary: Single rule, team auto-detected
+                value:
+                  githubUsername: john-doe
+                  projectName: SELISE Admin Portal
+                  prLink: https://github.com/selise/admin/pull/99
+                  status: SUBMITTED
+                  items:
+                    - ruleCode: SEL_PULL003
+                      category: Pull Request
+                      description: PR title does not follow conventional commit format
+                      fineAmount: 100
+                      multiplier: 1
+              explicit_team:
+                summary: Explicit team slug (required for multi-team developers)
+                value:
+                  githubUsername: john-doe
+                  teamSlug: BE
+                  projectName: SELISE Admin Portal
+                  prLink: https://github.com/selise/admin/pull/99
+                  items:
+                    - ruleCode: SEL_PULL001
+                      category: Pull Request
+                      description: PR has no JIRA ticket reference
+                      fineAmount: 50
+                      multiplier: 3
+                      notes: Missing ticket reference in 3 commits
+              dual_fine:
+                summary: SEL_PULL008 with automatic approver fine
+                value:
+                  githubUsername: john-doe
+                  approverGithubUsername: jane-smith
+                  teamSlug: FE
+                  projectName: SELISE Admin Portal
+                  prLink: https://github.com/selise/admin/pull/99
+                  items:
+                    - ruleCode: SEL_PULL008
+                      category: Pull Request
+                      description: PR merged without running required pipeline command
+                      fineAmount: 100
+                      multiplier: 1
+      responses:
+        "201":
+          description: Violation created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateViolationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: Entity resolution error (developer/team not found, or ambiguous team)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                developer_not_found:
+                  value:
+                    error: Developer "john-doe" not found
+                team_not_found:
+                  value:
+                    error: Team "XY" not found
+                ambiguous_team:
+                  value:
+                    error: Developer belongs to multiple teams — specify teamSlug or teamId
+        "500":
+          description: No admin user available to act as system reporter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+components:
+  securitySchemes:
+    BearerToken:
+      type: http
+      scheme: bearer
+      description: "Set GITHUB_SYNC_SECRET in the server env. Pass as: Authorization: Bearer <secret>"
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: |
+        Username: value of `GITHUB_SYNC_USER` env var (default: `github`).
+        Password: value of `GITHUB_SYNC_SECRET` env var.
+
+  schemas:
+    CreateViolationRequest:
+      type: object
+      required:
+        - githubUsername
+        - projectName
+        - prLink
+        - items
+      properties:
+        githubUsername:
+          type: string
+          description: GitHub username of the developer who committed the violation.
+          example: john-doe
+        approverGithubUsername:
+          type: string
+          description: |
+            GitHub username of the PR approver. Required when any item uses `SEL_PULL008`
+            to trigger the automatic Nu. 50 approver fine.
+          example: jane-smith
+        teamSlug:
+          type: string
+          description: |
+            Team slug (e.g. `BE`, `FE`, `QA`). Required when the developer belongs to
+            more than one team. If omitted and the developer has exactly one team,
+            that team is used automatically.
+          example: BE
+        projectName:
+          type: string
+          description: |
+            Human-readable project name. Upserted automatically — the `projectCode` is
+            derived from the `org/repo` portion of `prLink`.
+          example: SELISE Admin Portal
+        prLink:
+          type: string
+          format: uri
+          description: Full GitHub PR URL. Must start with `https://github.com`.
+          example: https://github.com/selise/admin/pull/99
+        status:
+          type: string
+          enum: [DRAFT, SUBMITTED]
+          default: DRAFT
+          description: |
+            `DRAFT` — saved silently, not yet in the review queue.
+            `SUBMITTED` — immediately visible to captains/admins for review.
+        items:
+          type: array
+          minItems: 1
+          description: One or more rules violated in this PR.
+          items:
+            $ref: "#/components/schemas/ViolationItem"
+
+    ViolationItem:
+      type: object
+      required:
+        - ruleCode
+        - description
+        - fineAmount
+      properties:
+        ruleCode:
+          type: string
+          description: Unique rule identifier. Upserted if not already in the system.
+          example: SEL_PULL003
+        category:
+          type: string
+          default: Pull Request
+          description: Rule category, used when creating the rule for the first time.
+          example: Pull Request
+        description:
+          type: string
+          description: Human-readable rule description. Updated on each call.
+          example: PR title does not follow conventional commit format
+        fineAmount:
+          type: number
+          description: Base fine amount in Nu. Updated on each call.
+          example: 100
+        multiplier:
+          type: integer
+          minimum: 1
+          default: 1
+          description: |
+            Repeat multiplier for per-occurrence rules (e.g. SEL_PULL001, SEL_PULL009).
+            Final fine = `fineAmount × multiplier`.
+          example: 3
+        notes:
+          type: string
+          description: Optional free-text context about this specific occurrence.
+          example: Missing JIRA ticket reference in 3 commits
+
+    CreateViolationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Internal violation report ID.
+          example: clxyz1234
+        prLink:
+          type: string
+          example: https://github.com/selise/admin/pull/99
+        totalFine:
+          type: number
+          description: Total fine amount for the developer in Nu.
+          example: 300
+        developer:
+          type: object
+          properties:
+            githubUsername:
+              type: string
+              example: john-doe
+            name:
+              type: string
+              example: John Doe
+        project:
+          type: object
+          properties:
+            projectCode:
+              type: string
+              example: selise/admin
+            name:
+              type: string
+              example: SELISE Admin Portal
+
+    ViolationSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [DRAFT, SUBMITTED, UNDER_REVIEW, APPROVED, REJECTED]
+        totalFine:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+        developer:
+          type: object
+          properties:
+            githubUsername:
+              type: string
+            name:
+              type: string
+        project:
+          type: object
+          properties:
+            projectCode:
+              type: string
+            name:
+              type: string
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              rule:
+                type: object
+                properties:
+                  code:
+                    type: string
+                  description:
+                    type: string
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: Unauthorized
+    BadRequest:
+      description: Request body failed validation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

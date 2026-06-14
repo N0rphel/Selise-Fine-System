@@ -22,9 +22,77 @@ model User {
   reportedViolations ViolationReport[] @relation("Reporter")
   approvedViolations ViolationReport[] @relation("Approver")
   auditLogs          AuditLog[]
+  prOwnerHistory     PrOwnerRotation[] @relation("PrOwnerHistory")
+  prOwnerRotations   PrOwnerRotation[] @relation("PrOwnerRotatedBy")
+  withdrawals        Withdrawal[]      @relation("Withdrawals")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Withdrawal {
+  id             String   @id @default(cuid())
+  amount         Float
+  reason         String
+  description    String?
+  evidenceImages String[] @default([])
+  withdrawnById  String
+
+  withdrawnBy User @relation("Withdrawals", fields: [withdrawnById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PrOwnerRotation {
+  id          String    @id @default(cuid())
+  userId      String
+  teamId      String?   // which team's rotation; null = legacy global records
+  startedAt   DateTime  @default(now())
+  endedAt     DateTime?
+  rotatedById String
+
+  user      User  @relation("PrOwnerHistory",   fields: [userId],      references: [id])
+  rotatedBy User  @relation("PrOwnerRotatedBy", fields: [rotatedById], references: [id])
+  team      Team? @relation(fields: [teamId], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model Team {
+  id            String  @id @default(cuid())
+  name          String
+  slug          String  @unique // BE | FE | QA
+  description   String?
+  budgetAmount  Float   @default(0)
+
+  members          TeamMember[]
+  rules            ViolationRule[]
+  violations       ViolationReport[]
+  projects         Project[]
+  financeAccount   FinanceAccount?
+  prRotations      PrOwnerRotation[]
+  assignmentCycles AssignmentCycle[]
+  prSessions       PrSession[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+}
+
+model TeamMember {
+  id          String   @id @default(cuid())
+  teamId      String
+  developerId String
+  roles       String[] @default(["MEMBER"]) // MEMBER | REPORTER | CAPTAIN | FINANCE
+
+  team      Team      @relation(fields: [teamId], references: [id])
+  developer Developer @relation(fields: [developerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, developerId])
 }
 
 model Developer {
@@ -41,6 +109,7 @@ model Developer {
   assignments ProjectAssignment[]
   codeOwners  CodeOwner[]
   attendances Attendance[]
+  teamMembers TeamMember[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -54,7 +123,9 @@ model Project {
   type        String?
   description String?
   active      Boolean @default(true)
+  teamId      String?
 
+  team        Team?               @relation(fields: [teamId], references: [id])
   violations  ViolationReport[]
   assignments ProjectAssignment[]
   codeOwners  CodeOwner[]
@@ -71,7 +142,9 @@ model ViolationRule {
   description String
   fineAmount  Float
   active      Boolean @default(true)
+  teamId      String?
 
+  team  Team?          @relation(fields: [teamId], references: [id])
   items ViolationItem[]
 
   createdAt DateTime  @default(now())
@@ -81,16 +154,18 @@ model ViolationRule {
 
 model ViolationReport {
   id            String  @id @default(cuid())
+  teamId        String?
   projectId     String
   developerId   String
   reporterId    String
   approverId    String?
-  prLink        String
-  evidence      String?
-  status        String  @default("DRAFT")
+  prLink          String
+  evidenceImages  String[] @default([])
+  status          String   @default("DRAFT")
   totalFine     Float   @default(0)
   rejectionNote String?
 
+  team      Team?     @relation(fields: [teamId], references: [id])
   project   Project   @relation(fields: [projectId], references: [id])
   developer Developer @relation(fields: [developerId], references: [id])
   reporter  User      @relation("Reporter", fields: [reporterId], references: [id])
@@ -145,7 +220,9 @@ model AssignmentCycle {
   endDate     DateTime
   status      String   @default("DRAFT")
   generatedBy String?
+  teamId      String?
 
+  team        Team?               @relation(fields: [teamId], references: [id])
   assignments ProjectAssignment[]
 
   createdAt DateTime @default(now())
@@ -194,8 +271,12 @@ model FinanceAccount {
   qrCodeBase64  String?
   createdBy     String
   updatedBy     String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  teamId        String?  @unique
+
+  team Team? @relation(fields: [teamId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model AuditLog {
@@ -220,7 +301,9 @@ model PrSession {
   status     String   @default("SCHEDULED") // SCHEDULED | CANCELLED
   cancelNote String?
   hostedBy   String   // userId of creator
+  teamId     String?
 
+  team        Team?        @relation(fields: [teamId], references: [id])
   attendances Attendance[]
 
   createdAt DateTime @default(now())

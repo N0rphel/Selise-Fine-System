@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Edit2, ToggleLeft, ToggleRight } from 'lucide-react'
 
@@ -11,29 +11,67 @@ interface Project {
   description: string | null
   active: boolean
   createdAt: Date
+  teamId: string | null
+  team: { id: string; name: string; slug: string } | null
   _count: { violations: number; assignments: number }
 }
+interface CaptainTeam { id: string; name: string; slug: string }
 
-export function ProjectsClient({ projects: initial, canEdit }: { projects: Project[]; canEdit: boolean }) {
+export function ProjectsClient({
+  projects: initial, canEdit, isAdmin, captainTeams = [],
+}: {
+  projects: Project[]
+  canEdit: boolean
+  isAdmin: boolean
+  captainTeams?: CaptainTeam[]
+}) {
   const router = useRouter()
   const [projects, setProjects] = useState(initial)
-  // Keep local list in sync whenever the server component re-renders (router.refresh)
   useEffect(() => { setProjects(initial) }, [initial])
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<Project | null>(null)
-  const [form, setForm] = useState({ projectCode: '', name: '', type: '', description: '' })
+  const [form, setForm] = useState({
+    projectCode: '', name: '', type: '', description: '',
+    teamId: !isAdmin && captainTeams.length === 1 ? captainTeams[0].id : '',
+  })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [filterTeam, setFilterTeam] = useState<string>('all')
 
-  function openCreate() { setEditing(null); setForm({ projectCode: '', name: '', type: '', description: '' }); setShowModal(true) }
-  function openEdit(p: Project) { setEditing(p); setForm({ projectCode: p.projectCode, name: p.name, type: p.type ?? '', description: p.description ?? '' }); setShowModal(true) }
+  const teams = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; slug: string }>()
+    projects.forEach(p => { if (p.team) map.set(p.team.id, p.team) })
+    return Array.from(map.values()).sort((a, b) => a.slug.localeCompare(b.slug))
+  }, [projects])
+
+  const filtered = useMemo(() => {
+    if (filterTeam === 'all') return projects
+    if (filterTeam === 'none') return projects.filter(p => !p.teamId)
+    return projects.filter(p => p.teamId === filterTeam)
+  }, [projects, filterTeam])
+
+  function openCreate() {
+    setEditing(null)
+    setForm({
+      projectCode: '', name: '', type: '', description: '',
+      teamId: !isAdmin && captainTeams.length === 1 ? captainTeams[0].id : '',
+    })
+    setShowModal(true)
+  }
+
+  function openEdit(p: Project) {
+    setEditing(p)
+    setForm({ projectCode: p.projectCode, name: p.name, type: p.type ?? '', description: p.description ?? '', teamId: p.teamId ?? '' })
+    setShowModal(true)
+  }
 
   async function save() {
     setLoading(true); setError('')
     try {
+      const payload = { ...form, teamId: form.teamId || null }
       const res = editing
-        ? await fetch(`/api/projects/${editing.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
-        : await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+        ? await fetch(`/api/projects/${editing.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        : await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       if (!res.ok) { const d = await res.json(); throw new Error(d.error?.fieldErrors ? 'Validation error' : d.error) }
       setShowModal(false); router.refresh()
     } catch (e: any) { setError(e.message) } finally { setLoading(false) }
@@ -41,14 +79,12 @@ export function ProjectsClient({ projects: initial, canEdit }: { projects: Proje
 
   async function toggleActive(p: Project) {
     const next = !p.active
-    // Optimistic update for instant, reliable feedback
     setProjects(prev => prev.map(x => x.id === p.id ? { ...x, active: next } : x))
     try {
       const res = await fetch(`/api/projects/${p.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: next }) })
       if (!res.ok) throw new Error()
       router.refresh()
     } catch {
-      // Revert on failure
       setProjects(prev => prev.map(x => x.id === p.id ? { ...x, active: p.active } : x))
     }
   }
@@ -62,12 +98,35 @@ export function ProjectsClient({ projects: initial, canEdit }: { projects: Proje
         {canEdit && <button onClick={openCreate} className="btn-primary"><Plus className="w-4 h-4" />Add Project</button>}
       </div>
 
+      {/* Team tabs */}
+      {teams.length > 0 && (
+        <div className="flex gap-2 flex-wrap">
+          <button onClick={() => setFilterTeam('all')}
+            className={`px-4 py-1.5 text-sm rounded-lg border transition-colors ${filterTeam === 'all' ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+            All
+          </button>
+          {isAdmin && (
+            <button onClick={() => setFilterTeam('none')}
+              className={`px-4 py-1.5 text-sm rounded-lg border transition-colors ${filterTeam === 'none' ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+              Global
+            </button>
+          )}
+          {teams.map(t => (
+            <button key={t.id} onClick={() => setFilterTeam(t.id)}
+              className={`px-4 py-1.5 text-sm rounded-lg border transition-colors ${filterTeam === t.id ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+              <span className="font-bold text-xs mr-1">{t.slug}</span>{t.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="card overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
               <th className="table-th">Code</th>
               <th className="table-th">Name</th>
+              <th className="table-th">Team</th>
               <th className="table-th">Type</th>
               <th className="table-th">Violations</th>
               <th className="table-th">Assignments</th>
@@ -76,10 +135,17 @@ export function ProjectsClient({ projects: initial, canEdit }: { projects: Proje
             </tr>
           </thead>
           <tbody>
-            {projects.map(p => (
+            {filtered.length === 0 ? (
+              <tr><td colSpan={canEdit ? 8 : 7} className="table-td text-center text-gray-400 py-10">No projects found</td></tr>
+            ) : filtered.map(p => (
               <tr key={p.id} className="table-row">
                 <td className="table-td font-mono text-xs font-medium text-gray-600">{p.projectCode}</td>
                 <td className="table-td font-medium text-gray-900">{p.name}</td>
+                <td className="table-td">
+                  {p.team
+                    ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">{p.team.slug}</span>
+                    : <span className="text-xs text-gray-400">Global</span>}
+                </td>
                 <td className="table-td">{p.type ? <span className="badge bg-purple-50 text-purple-700 ring-purple-200">{p.type}</span> : '—'}</td>
                 <td className="table-td">{p._count.violations}</td>
                 <td className="table-td">{p._count.assignments}</td>
@@ -111,12 +177,28 @@ export function ProjectsClient({ projects: initial, canEdit }: { projects: Proje
             {!editing && (
               <div>
                 <label className="label">Project Code *</label>
-                <input value={form.projectCode} onChange={e => setForm(f => ({ ...f, projectCode: e.target.value.toUpperCase() }))} className="input" placeholder="ONEHUB" />
+                <input value={form.projectCode} onChange={e => setForm(f => ({ ...f, projectCode: e.target.value.toUpperCase() }))} className="input" placeholder="L3-RAILS-SUNRISE-PARTNERPORTAL" />
               </div>
             )}
             <div>
               <label className="label">Name *</label>
-              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="input" placeholder="OneHub" />
+              <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="input" placeholder="Partner Portal" />
+            </div>
+            <div>
+              <label className="label">Team</label>
+              {isAdmin ? (
+                <select value={form.teamId} onChange={e => setForm(f => ({ ...f, teamId: e.target.value }))} className="input">
+                  <option value="">Global (no team)</option>
+                  {teams.map(t => <option key={t.id} value={t.id}>{t.name} ({t.slug})</option>)}
+                </select>
+              ) : captainTeams.length === 1 ? (
+                <input value={`${captainTeams[0].name} (${captainTeams[0].slug})`} className="input bg-gray-50" disabled />
+              ) : (
+                <select value={form.teamId} onChange={e => setForm(f => ({ ...f, teamId: e.target.value }))} className="input">
+                  <option value="">Select team…</option>
+                  {captainTeams.map(t => <option key={t.id} value={t.id}>{t.name} ({t.slug})</option>)}
+                </select>
+              )}
             </div>
             <div>
               <label className="label">Type</label>

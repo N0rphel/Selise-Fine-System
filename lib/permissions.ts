@@ -1,26 +1,25 @@
-// All available permissions
-export const PERMISSIONS = ['ADMIN', 'FINANCE', 'DEVELOPER'] as const
+// User-level permissions (global scope).
+// Finance access is team-scoped — granted via TeamMember.roles, not here.
+// Team roles (REPORTER, CAPTAIN, FINANCE, MEMBER) live in TeamMember.roles.
+export const PERMISSIONS = ['ADMIN', 'DEVELOPER'] as const
 export type Permission = typeof PERMISSIONS[number]
 
 export const PERMISSION_LABELS: Record<Permission, string> = {
-  ADMIN: 'Admin / PR Owner',
-  FINANCE: 'Finance Collector',
+  ADMIN:     'System Admin',
   DEVELOPER: 'Developer',
 }
 
 export const PERMISSION_DESCRIPTIONS: Record<Permission, string> = {
-  ADMIN: 'PR Owner — full control: report & approve violations, manage projects, developers, rules, assignments & users',
-  FINANCE: 'View finance reports and confirm payments',
-  DEVELOPER: 'Baseline — every user is a developer. View own violations & fines, submit payments',
+  ADMIN:     'System-wide: manages all users, teams, projects, rules, and sees all violations.',
+  DEVELOPER: 'Baseline — every user is a developer. View own violations, submit payments.',
 }
 
-// Every user is always a developer. This guarantees the baseline permission
-// is present regardless of what else is granted.
 export function withBaseline(permissions: string[]): string[] {
-  return Array.from(new Set(['DEVELOPER', ...permissions]))
+  // Strip any legacy FINANCE from system-level perms; finance is now team-scoped only
+  const cleaned = permissions.filter(p => p !== 'FINANCE')
+  return Array.from(new Set(['DEVELOPER', ...cleaned]))
 }
 
-// Helper — ADMIN always inherits all permissions
 export function has(permissions: string[], perm: Permission | 'ADMIN'): boolean {
   return permissions.includes('ADMIN') || permissions.includes(perm)
 }
@@ -41,22 +40,30 @@ export function canApproveViolations(permissions: string[]): boolean {
   return isAdmin(permissions)
 }
 
-export function canViewFinance(permissions: string[]): boolean {
-  return has(permissions, 'FINANCE')
-}
-
 export function canManageMaster(permissions: string[]): boolean {
   return isAdmin(permissions)
 }
 
-// Sidebar visibility per permission set
-export function visibleNav(permissions: string[]): string[] {
-  const routes: string[] = ['/dashboard']
-  if (canViewViolations(permissions)) routes.push('/violations')
-  if (isAdmin(permissions)) routes.push('/projects', '/developers', '/rules', '/assignments', '/attendance')
-  if (canViewFinance(permissions)) routes.push('/reports')
-  if (isAdmin(permissions)) routes.push('/users')
-  // Everyone can see where to pay their fines
+// Global finance access = Admin only now. Team-level finance is via TeamMember.roles (FINANCE/CAPTAIN).
+export function canViewFinance(permissions: string[]): boolean {
+  return isAdmin(permissions)
+}
+
+// Sidebar visibility. hasTeamFinanceRole = user is FINANCE or CAPTAIN in any team.
+// hasTeamCaptainRole = user is CAPTAIN in at least one team.
+export function visibleNav(permissions: string[], hasTeamFinanceRole = false, hasTeamCaptainRole = false): string[] {
+  // Everyone sees these
+  const routes: string[] = ['/dashboard', '/violations', '/rules', '/assignments']
+  // Admin-only management pages; captains also get projects + attendance
+  if (isAdmin(permissions)) {
+    routes.push('/projects', '/developers', '/attendance')
+  } else if (hasTeamCaptainRole) {
+    routes.push('/projects', '/attendance')
+  }
+  routes.push('/pr-owner')
+  if (isAdmin(permissions) || hasTeamFinanceRole) routes.push('/reports')
+  // Teams management: admin only
+  if (isAdmin(permissions)) routes.push('/teams', '/users')
   routes.push('/payment-details')
   return routes
 }

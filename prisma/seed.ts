@@ -4,7 +4,18 @@ const prisma = new PrismaClient()
 
 async function main() {
   // Grant the first admin via ADMIN_GITHUB_LOGINS in .env.
-  // We only seed master config: Projects and Violation Rules.
+  // We only seed master config: Teams, Projects and Violation Rules.
+
+  const teams = [
+    { slug: 'BE', name: 'Backend', description: 'Ruby on Rails backend developers' },
+    { slug: 'FE', name: 'Frontend', description: 'React / Angular frontend developers' },
+    { slug: 'QA', name: 'QA', description: 'Quality assurance engineers' },
+  ]
+  const teamMap: Record<string, string> = {}
+  for (const t of teams) {
+    const team = await prisma.team.upsert({ where: { slug: t.slug }, update: {}, create: t })
+    teamMap[t.slug] = team.id
+  }
 
   const projects = [
     { projectCode: 'OHB', name: 'OneHub', type: 'Product' },
@@ -22,41 +33,90 @@ async function main() {
     await prisma.project.upsert({ where: { projectCode: p.projectCode }, update: {}, create: p })
   }
 
-  const rules = [
-    { code: 'SEL_BRANCH001', category: 'Branching', description: 'Incorrect branch naming convention', fineAmount: 40 },
-    { code: 'SEL_PULL001', category: 'Pull Request', description: 'PR Template Missing — fine per missing item (Description / Test Coverage / New Gem Reference)', fineAmount: 20 },
-    { code: 'SEL_PULL002', category: 'Pull Request', description: 'PR not linked to a ticket', fineAmount: 20 },
-    { code: 'SEL_PULL003', category: 'Pull Request', description: 'PR merged without required approval', fineAmount: 20 },
-    { code: 'SEL_PULL004', category: 'Pull Request', description: 'Wrong PR label used', fineAmount: 20 },
-    { code: 'SEL_PULL005', category: 'Pull Request', description: 'PR title does not follow naming convention', fineAmount: 20 },
-    { code: 'SEL_PULL006', category: 'Pull Request', description: 'PR too large — exceeds size limit', fineAmount: 50 },
-    { code: 'SEL_PULL007', category: 'Pull Request', description: 'Missing code owner review', fineAmount: 50 },
-    { code: 'SEL_PULL008', category: 'Pull Request', description: 'Missing required commands — Developer: CHF 100, Approver: CHF 50 (dual violation auto-generated)', fineAmount: 100 },
-    { code: 'SEL_PULL009', category: 'Pull Request', description: 'Indentation issues — fine per file', fineAmount: 20 },
-    { code: 'SEL_PULL012', category: 'Pull Request', description: 'PR description incomplete or missing key sections', fineAmount: 20 },
-    { code: 'SEL_RAILS001', category: 'Rails', description: 'Enum defined without default value', fineAmount: 20 },
-    { code: 'SEL_RAILS002', category: 'Rails', description: 'Missing database index on foreign key / queried column', fineAmount: 50 },
-    { code: 'SEL_RAILS003', category: 'Rails', description: 'N+1 query issue not resolved', fineAmount: 20 },
-    { code: 'SEL_RAILS004', category: 'Rails', description: 'Business logic placed in controller instead of service/model', fineAmount: 30 },
-    { code: 'SEL_RAILS005', category: 'Rails', description: 'Missing model validation for required field', fineAmount: 20 },
-    { code: 'SEL_RAILS006', category: 'Rails', description: 'Incorrect use of Rails conventions', fineAmount: 20 },
-    { code: 'SEL_RSPEC001', category: 'RSpec', description: 'Missing test coverage for new feature or bug fix', fineAmount: 50 },
-    { code: 'SEL_RSPEC002', category: 'RSpec', description: 'Flaky or poorly written tests', fineAmount: 20 },
-    { code: 'SEL_RSPEC003', category: 'RSpec', description: 'Missing edge case test', fineAmount: 10 },
-    { code: 'SEL_RSPEC004', category: 'RSpec', description: 'Test description does not match actual implementation', fineAmount: 20 },
-    { code: 'SEL_GQL001', category: 'GraphQL', description: 'Missing field description or documentation', fineAmount: 20 },
-    { code: 'SEL_GQL002', category: 'GraphQL', description: 'N+1 query in GraphQL resolver', fineAmount: 20 },
-    { code: 'SEL_GQL003', category: 'GraphQL', description: 'Incorrect GraphQL type usage', fineAmount: 10 },
-    { code: 'SEL_GQL004', category: 'GraphQL', description: 'Missing authorization check in resolver', fineAmount: 10 },
-    { code: 'SEL_GQL006', category: 'GraphQL', description: 'Schema naming convention violation', fineAmount: 20 },
+  // Rules are tagged with teamId where team-specific; null = applies to all teams
+  const rules: Array<{ code: string; category: string; description: string; fineAmount: number; teamSlug?: string }> = [
+    // ---- Branching (all teams) ----
+    { code: 'SEL_BRANCH002', category: 'Branching', fineAmount: 0,
+      description: 'Branch name must follow convention: feature/, fix/, release/, or hotfix/ prefix.' },
+
+    // ---- Pull Request (all teams) ----
+    { code: 'SEL_PULL001', category: 'Pull Request', fineAmount: 20,
+      description: 'PR missing template essentials — fined per missing point: (1) description with tags, (2) test coverage, (3) new gem references.' },
+    { code: 'SEL_PULL002', category: 'Pull Request', fineAmount: 20,
+      description: 'PR description lacks a workflow summary for reviewers; required when the diff contains complex logic.' },
+    { code: 'SEL_PULL003', category: 'Pull Request', fineAmount: 20,
+      description: 'Major new module added without an ERD in the PR description.' },
+    { code: 'SEL_PULL004', category: 'Pull Request', fineAmount: 20,
+      description: 'PR title missing priority prefix ([HOTFIX]/[FIX]/[RUSH]/[NORMAL]/[WIP]/[RFC]), or changed-file count exceeds the limit for the chosen tag.' },
+    { code: 'SEL_PULL005', category: 'Pull Request', fineAmount: 20,
+      description: 'Meaningless or single-letter variable names that convey no intent.' },
+    { code: 'SEL_PULL006', category: 'Pull Request', fineAmount: 50,
+      description: 'Careless typo in a method name or variable that would raise an undefined-method/name error.' },
+    { code: 'SEL_PULL008', category: 'Pull Request', fineAmount: 100,
+      description: 'Rake task, data migration, or deploy command added in diff but not mentioned in PR description. Developer: Nu. 100 + Approver: Nu. 50 (auto-generated).' },
+    { code: 'SEL_PULL009', category: 'Pull Request', fineAmount: 20,
+      description: 'Incorrect indentation or spacing — fined per offending file.' },
+
+    // ---- BE-specific Pull Request ----
+    { code: 'SEL_PULL007', category: 'Pull Request', fineAmount: 10, teamSlug: 'BE',
+      description: 'Predicate method (returns boolean) does not end with ?.' },
+    { code: 'SEL_PULL010', category: 'Pull Request', fineAmount: 10, teamSlug: 'BE',
+      description: 'Value reused in multiple places not extracted to a named constant.' },
+    { code: 'SEL_PULL012', category: 'Pull Request', fineAmount: 20, teamSlug: 'BE',
+      description: 'Enum declared in a model without a default value.' },
+
+    // ---- RSpec (BE) ----
+    { code: 'SEL_RSPEC002', category: 'RSpec', fineAmount: 20, teamSlug: 'BE',
+      description: 'context block added without an opposite negative case (e.g. "with valid params" missing "with invalid params").' },
+    { code: 'SEL_RSPEC003', category: 'RSpec', fineAmount: 10, teamSlug: 'BE',
+      description: 'Empty line present between different nested block types (describe/context/it).' },
+    { code: 'SEL_RSPEC004', category: 'RSpec', fineAmount: 20, teamSlug: 'BE',
+      description: 'Sibling blocks of the same type (two it blocks, two context blocks) not separated by an empty line.' },
+
+    // ---- Rails (BE) ----
+    { code: 'SEL_RAILS001', category: 'Rails', fineAmount: 20, teamSlug: 'BE',
+      description: 'Multi-attribute macro (attr_accessor, validates, etc.) exceeds line length without wrapping arguments one per line.' },
+    { code: 'SEL_RAILS002', category: 'Rails', fineAmount: 50, teamSlug: 'BE',
+      description: 'Integer enum column in migration lacks a default value and null: false constraint.' },
+    { code: 'SEL_RAILS003', category: 'Rails', fineAmount: 20, teamSlug: 'BE',
+      description: 'Resource uses a single form/service object for both create and update instead of two separate objects.' },
+    { code: 'SEL_RAILS004', category: 'Rails', fineAmount: 30, teamSlug: 'BE',
+      description: 'Model class grows past 50 LOC in this diff without being refactored into concerns or service objects.' },
+    { code: 'SEL_RAILS005', category: 'Rails', fineAmount: 20, teamSlug: 'BE',
+      description: 'Method chain crosses 2 association levels (Law of Demeter violation) — delegate instead.' },
+    { code: 'SEL_RAILS006', category: 'Rails', fineAmount: 20, teamSlug: 'BE',
+      description: 'Dead or commented-out code kept in the diff without a comment explaining why.' },
+
+    // ---- File Naming (BE) ----
+    { code: 'SEL_FNC001', category: 'File Naming', fineAmount: 20, teamSlug: 'BE',
+      description: 'Namespace module not pluralized (e.g. module User instead of module Users).' },
+    { code: 'SEL_FNC002', category: 'File Naming', fineAmount: 40, teamSlug: 'BE',
+      description: 'Namespaced class name repeats the namespace (e.g. Mutations::Users::CreateUser instead of Mutations::Users::Create).' },
+
+    // ---- GraphQL (BE) ----
+    { code: 'SEL_GQL001', category: 'GraphQL', fineAmount: 20, teamSlug: 'BE',
+      description: 'GraphQL mutation/query has more than 3 arguments not extracted to a separate arguments file.' },
+    { code: 'SEL_GQL002', category: 'GraphQL', fineAmount: 20, teamSlug: 'BE',
+      description: 'GraphQL argument file not placed inside an attributes folder.' },
+    { code: 'SEL_GQL003', category: 'GraphQL', fineAmount: 10, teamSlug: 'BE',
+      description: 'GraphQL field/argument type uses a raw scalar string instead of a GraphQL type class.' },
+    { code: 'SEL_GQL004', category: 'GraphQL', fineAmount: 10, teamSlug: 'BE',
+      description: 'GraphQL field or argument is missing a description.' },
+    { code: 'SEL_GQL006', category: 'GraphQL', fineAmount: 20, teamSlug: 'BE',
+      description: 'GraphQL enum violates conventions: wrong location, class name doesn\'t end with Enum, graphql_name contains "enum", or not defined dynamically from Rails enum.' },
   ]
-  for (const r of rules) {
-    await prisma.violationRule.upsert({ where: { code: r.code }, update: {}, create: r })
+  for (const { teamSlug, ...r } of rules) {
+    const teamId = teamSlug ? (teamMap[teamSlug] ?? null) : null
+    await prisma.violationRule.upsert({
+      where: { code: r.code },
+      update: { description: r.description, fineAmount: r.fineAmount, category: r.category, teamId },
+      create: { ...r, teamId },
+    })
   }
 
   console.log('\nSeed complete — Projects + Violation Rules only.')
   console.log('Developers onboard via GitHub login.')
-  console.log('Set ADMIN_GITHUB_LOGINS in .env to bootstrap the first admin (PR Owner).')
+  console.log('Set ADMIN_GITHUB_LOGINS in .env to bootstrap the first admin (PR Captain).')
 }
 
 main().catch(console.error).finally(() => prisma.$disconnect())

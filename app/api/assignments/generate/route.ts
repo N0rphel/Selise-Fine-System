@@ -1,8 +1,7 @@
 import { auth } from '@/auth'
-import { isAdmin, canViewFinance } from '@/lib/permissions'
+import { isAdmin } from '@/lib/permissions'
+import { getUserTeamMemberships, captainTeamIds } from '@/lib/team-auth'
 import { NextRequest, NextResponse } from 'next/server'
-
-
 import { db } from '@/lib/db'
 import { generateAssignments } from '@/lib/assignment-engine'
 import { z } from 'zod'
@@ -18,12 +17,21 @@ export async function POST(req: NextRequest) {
   const session = await auth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const user = session.user as any
-  if (!isAdmin(user.permissions ?? [])) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const admin = isAdmin(user.permissions ?? [])
 
   const parsed = schema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
 
   const { cycleId, reviewersPerProject, maxProjectsPerDeveloper, previousCycleId } = parsed.data
+
+  if (!admin) {
+    const memberships = await getUserTeamMemberships(user.developerId)
+    const myCaptainTeams = captainTeamIds(memberships)
+    const cycle = await db.assignmentCycle.findUnique({ where: { id: cycleId }, select: { teamId: true } })
+    if (!cycle?.teamId || !myCaptainTeams.includes(cycle.teamId)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   // Clear existing draft assignments for this cycle
   await db.projectAssignment.deleteMany({ where: { cycleId, locked: false } })

@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
-import { canViewFinance } from '@/lib/permissions'
+import { isAdmin } from '@/lib/permissions'
+import { getUserTeamMemberships, financeTeamIds } from '@/lib/team-auth'
 
 // Finance rejects a submitted payment (developer may resubmit)
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await auth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const user = session.user as any
-  if (!canViewFinance(user.permissions ?? [])) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  const memberships = await getUserTeamMemberships(user.developerId)
+  const hasAccess = isAdmin(user.permissions ?? []) || financeTeamIds(memberships).length > 0
+  if (!hasAccess) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { id } = await params
   const payment = await db.payment.findUnique({ where: { id } })

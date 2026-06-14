@@ -1,24 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
-import { canViewFinance } from '@/lib/permissions'
+import { isAdmin } from '@/lib/permissions'
+import { getUserTeamMemberships, financeTeamIds } from '@/lib/team-auth'
 
-// Finance lists payments (optionally filter by status)
+// Finance lists payments — scoped to team for non-admin finance users
 export async function GET(req: NextRequest) {
   const session = await auth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const user = session.user as any
-  if (!canViewFinance(user.permissions ?? [])) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status')
 
+  const where: any = {}
+  if (status) where.status = status
+
+  // Team finance users only see payments covering their team's violations
+  if (!isAdmin(user.permissions ?? [])) {
+    const memberships = await getUserTeamMemberships(user.developerId)
+    const myFinanceTeams = financeTeamIds(memberships)
+    if (myFinanceTeams.length > 0) {
+      where.violations = { some: { teamId: { in: myFinanceTeams } } }
+    }
+  }
+
   const payments = await db.payment.findMany({
-    where: status ? { status } : undefined,
+    where,
     orderBy: { submittedAt: 'desc' },
-    include: {
-      violations: { include: { developer: true, project: true } },
-    },
+    include: { violations: { include: { developer: true, project: true } } },
   })
 
   return NextResponse.json(payments)

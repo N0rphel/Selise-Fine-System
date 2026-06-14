@@ -2,10 +2,10 @@
 import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Zap, Send, Trash2, UserPlus } from 'lucide-react'
+import { ArrowLeft, Zap, Send, Trash2, UserPlus, Copy, Check, X } from 'lucide-react'
 import { formatDate, CYCLE_STATUS_COLORS } from '@/lib/utils'
 
-interface Developer { id: string; name: string; department: string }
+interface Developer { id: string; name: string; department: string; githubUsername: string | null }
 interface Project { id: string; name: string; projectCode: string }
 interface Assignment { id: string; projectId: string; developerId: string; locked: boolean; project: Project; developer: Developer }
 interface Cycle { id: string; name: string; startDate: Date; endDate: Date; status: string; assignments: Assignment[] }
@@ -29,6 +29,8 @@ export function CycleDetailClient({ cycle, developers, projects, allCycles, canM
   const [error, setError] = useState('')
   const [showAddModal, setShowAddModal] = useState<{ projectId: string } | null>(null)
   const [addDevId, setAddDevId] = useState('')
+  const [snippetProject, setSnippetProject] = useState<{ project: Project; snippet: string } | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const byProject = useMemo(() => {
     const map = new Map<string, Assignment[]>()
@@ -90,6 +92,24 @@ export function CycleDetailClient({ cycle, developers, projects, allCycles, canM
     setShowAddModal(null); setAddDevId(''); router.refresh()
   }
 
+  function openSnippet(project: Project) {
+    const assigned = byProject.get(project.id) ?? []
+    const handles = assigned
+      .map(a => a.developer.githubUsername)
+      .filter(Boolean)
+      .map(u => `@${u}`)
+      .join(' ')
+    setSnippetProject({ project, snippet: `* ${handles}` })
+    setCopied(false)
+  }
+
+  async function copySnippet() {
+    if (!snippetProject) return
+    await navigator.clipboard.writeText(snippetProject.snippet)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   const otherCycles = allCycles.filter(c => c.id !== cycle.id)
 
   return (
@@ -149,44 +169,62 @@ export function CycleDetailClient({ cycle, developers, projects, allCycles, canM
         </div>
       )}
 
-      {cycle.assignments.length > 0 && (
+      {(cycle.assignments.length > 0 || canManage) && (
         <div className="card overflow-hidden">
-          <div className="px-5 py-4 border-b border-gray-100">
+          <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
             <h2 className="font-semibold text-gray-900">Project Assignments</h2>
+            {projects.length - byProject.size > 0 && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                {projects.length - byProject.size} unassigned
+              </span>
+            )}
           </div>
           <div className="divide-y divide-gray-100">
-            {projects
-              .filter(p => byProject.has(p.id))
-              .map(project => {
-                const assigned = byProject.get(project.id) ?? []
-                return (
-                  <div key={project.id} className="px-5 py-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <div>
-                        <span className="font-medium text-gray-900">{project.name}</span>
-                        <span className="text-xs text-gray-400 ml-2">({project.projectCode})</span>
-                      </div>
-                      {canManage && cycle.status === 'DRAFT' && (
-                        <button onClick={() => setShowAddModal({ projectId: project.id })} className="btn-ghost py-1 px-2 text-xs">
-                          <UserPlus className="w-3.5 h-3.5" />Add
-                        </button>
+            {projects.map(project => {
+              const assigned = byProject.get(project.id) ?? []
+              const unassigned = assigned.length === 0
+              const clickable = !unassigned && cycle.status !== 'DRAFT'
+              return (
+                <div
+                  key={project.id}
+                  onClick={clickable ? () => openSnippet(project) : undefined}
+                  className={`px-5 py-4 ${unassigned ? 'bg-amber-50/50' : ''} ${clickable ? 'cursor-pointer hover:bg-blue-50/40 transition-colors' : ''}`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className={`font-medium ${unassigned ? 'text-amber-800' : 'text-gray-900'}`}>{project.name}</span>
+                      <span className="text-xs text-gray-400">({project.projectCode})</span>
+                      {unassigned && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-200 text-amber-800">No reviewers</span>
+                      )}
+                      {clickable && (
+                        <span className="text-[10px] text-gray-400 italic">click for CODEOWNERS</span>
                       )}
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      {assigned.map(a => (
-                        <div key={a.id} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-full pl-3 pr-2 py-1">
-                          <span className="text-xs font-medium text-blue-800">{a.developer.name}</span>
-                          {canManage && cycle.status === 'DRAFT' && !a.locked && (
-                            <button onClick={() => removeAssignment(a.id)} className="w-4 h-4 flex items-center justify-center text-blue-400 hover:text-red-500 transition-colors ml-1">
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
+                    {canManage && cycle.status === 'DRAFT' && (
+                      <button onClick={() => { setShowAddModal({ projectId: project.id }); setAddDevId('') }} className="btn-ghost py-1 px-2 text-xs">
+                        <UserPlus className="w-3.5 h-3.5" />Add
+                      </button>
+                    )}
                   </div>
-                )
-              })}
+                  <div className="flex flex-wrap gap-2">
+                    {assigned.map(a => (
+                      <div key={a.id} className="flex items-center gap-1 bg-blue-50 border border-blue-200 rounded-full pl-3 pr-2 py-1">
+                        <span className="text-xs font-medium text-blue-800">{a.developer.name}</span>
+                        {canManage && cycle.status === 'DRAFT' && !a.locked && (
+                          <button onClick={() => removeAssignment(a.id)} className="w-4 h-4 flex items-center justify-center text-blue-400 hover:text-red-500 transition-colors ml-1">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {unassigned && !canManage && (
+                      <span className="text-xs text-amber-600 italic">No reviewers assigned</span>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
@@ -236,6 +274,34 @@ export function CycleDetailClient({ cycle, developers, projects, allCycles, canM
                   })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {snippetProject && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-gray-900">CODEOWNERS Snippet</h2>
+                <p className="text-xs text-gray-500 mt-0.5">{snippetProject.project.name} ({snippetProject.project.projectCode})</p>
+              </div>
+              <button onClick={() => setSnippetProject(null)} className="text-gray-400 hover:text-gray-600 mt-0.5">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="relative">
+              <pre className="bg-gray-900 text-green-400 text-sm rounded-xl p-4 overflow-x-auto font-mono leading-relaxed whitespace-pre-wrap break-all">
+                {snippetProject.snippet}
+              </pre>
+              <button
+                onClick={copySnippet}
+                className="absolute top-2 right-2 flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
+              >
+                {copied ? <><Check className="w-3 h-3 text-green-400" /> Copied</> : <><Copy className="w-3 h-3" /> Copy</>}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400">Paste this into your repository&apos;s <code className="bg-gray-100 px-1 rounded">.github/CODEOWNERS</code> file.</p>
           </div>
         </div>
       )}

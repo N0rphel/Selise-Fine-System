@@ -6,9 +6,6 @@ import { canViewFinance } from '@/lib/permissions'
 export async function GET() {
   const session = await auth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const user = session.user as any
-  if (!canViewFinance(user.permissions ?? [])) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-
   const accounts = await db.financeAccount.findMany({ orderBy: { createdAt: 'asc' } })
   return NextResponse.json(accounts)
 }

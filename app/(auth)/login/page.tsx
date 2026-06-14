@@ -39,7 +39,7 @@ export default function LoginPage() {
           </button>
 
           <div className="text-xs text-gray-400 leading-relaxed border-t border-gray-100 pt-4">
-            <p>First sign-in creates your developer profile automatically. An admin can grant additional roles (Finance, PR Owner) afterwards in User Management.</p>
+            <p>First sign-in creates your developer profile automatically. An admin can grant additional roles (Finance, PR Captain) afterwards in User Management.</p>
           </div>
         </div>
       </div>

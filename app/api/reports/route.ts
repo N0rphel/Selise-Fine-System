@@ -1,27 +1,37 @@
 import { auth } from '@/auth'
-import { isAdmin, canViewFinance } from '@/lib/permissions'
+import { isAdmin } from '@/lib/permissions'
+import { getUserTeamMemberships, financeTeamIds } from '@/lib/team-auth'
 import { NextRequest, NextResponse } from 'next/server'
-
-
 import { db } from '@/lib/db'
 
 export async function GET(req: NextRequest) {
   const session = await auth()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const user = session.user as any
-  if (!canViewFinance(user.permissions ?? [])) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const permissions: string[] = user.permissions ?? []
+
+  // Admin sees all; team FINANCE/CAPTAIN are scoped to their teams via teamId
+  let teamIdFilter: { in: string[] } | undefined
+  if (!isAdmin(permissions)) {
+    const memberships = await getUserTeamMemberships(user.developerId)
+    const myFinanceTeams = financeTeamIds(memberships)
+    if (!myFinanceTeams.length) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    teamIdFilter = { in: myFinanceTeams }
+  }
 
   const { searchParams } = new URL(req.url)
   const type = searchParams.get('type') ?? 'monthly'
   const year = parseInt(searchParams.get('year') ?? String(new Date().getFullYear()))
   const month = parseInt(searchParams.get('month') ?? String(new Date().getMonth() + 1))
 
+  const baseWhere = { status: 'APPROVED', deletedAt: null, ...(teamIdFilter ? { teamId: teamIdFilter } : {}) }
+
   if (type === 'monthly') {
     const start = new Date(year, month - 1, 1)
     const end = new Date(year, month, 0, 23, 59, 59)
 
     const violations = await db.violationReport.findMany({
-      where: { status: 'APPROVED', deletedAt: null, createdAt: { gte: start, lte: end } },
+      where: { ...baseWhere, createdAt: { gte: start, lte: end } },
       include: { developer: true, project: true, items: { include: { rule: true } }, payment: true },
     })
 
@@ -45,7 +55,7 @@ export async function GET(req: NextRequest) {
 
   if (type === 'rules') {
     const violations = await db.violationItem.findMany({
-      where: { report: { status: 'APPROVED', deletedAt: null } },
+      where: { report: { ...baseWhere } },
       include: { rule: true },
     })
     const grouped = new Map<string, { rule: any; count: number; total: number }>()
@@ -62,7 +72,7 @@ export async function GET(req: NextRequest) {
 
   if (type === 'projects') {
     const violations = await db.violationReport.findMany({
-      where: { status: 'APPROVED', deletedAt: null },
+      where: { ...baseWhere },
       include: { project: true },
     })
     const grouped = new Map<string, { project: any; count: number; total: number }>()
@@ -79,7 +89,7 @@ export async function GET(req: NextRequest) {
 
   if (type === 'developer') {
     const violations = await db.violationReport.findMany({
-      where: { status: 'APPROVED', deletedAt: null },
+      where: { ...baseWhere },
       include: { developer: true, payment: true },
     })
     const grouped = new Map<string, { developer: any; count: number; total: number; collected: number }>()

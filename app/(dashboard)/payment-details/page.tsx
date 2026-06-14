@@ -1,18 +1,34 @@
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
 import { isAdmin, canViewFinance } from '@/lib/permissions'
+import { getUserTeamMemberships } from '@/lib/team-auth'
 import { Landmark, Info } from 'lucide-react'
-import Link from 'next/link'
 
 export default async function PaymentDetailsPage() {
   const session = await auth()
   const user = session!.user as any
   const permissions: string[] = user.permissions ?? ['DEVELOPER']
+  const admin = isAdmin(permissions) || canViewFinance(permissions)
 
-  // Finance officers / admins manage these in Finance Reports → Account Details
-  const canManage = canViewFinance(permissions) || isAdmin(permissions)
+  // For developers, show only the accounts for their teams
+  let accounts: { id: string; accountName: string; accountNumber: string; bankName: string | null; notes: string | null; qrCodeBase64: string | null; teamId: string | null; team?: { name: string; slug: string } | null }[] = []
 
-  const accounts = await db.financeAccount.findMany({ orderBy: { createdAt: 'asc' } })
+  if (admin) {
+    accounts = await db.financeAccount.findMany({
+      orderBy: { createdAt: 'asc' },
+      include: { team: { select: { name: true, slug: true } } },
+    })
+  } else {
+    const memberships = await getUserTeamMemberships(user.developerId)
+    const teamIds = memberships.map(m => m.teamId)
+    if (teamIds.length > 0) {
+      accounts = await db.financeAccount.findMany({
+        where: { teamId: { in: teamIds } },
+        orderBy: { createdAt: 'asc' },
+        include: { team: { select: { name: true, slug: true } } },
+      })
+    }
+  }
 
   return (
     <div className="space-y-5 max-w-3xl">
@@ -24,12 +40,7 @@ export default async function PaymentDetailsPage() {
       {accounts.length === 0 ? (
         <div className="card p-12 text-center">
           <Landmark className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">No payment account has been set up yet.</p>
-          {canManage && (
-            <Link href="/reports" className="btn-primary mt-4 inline-flex">
-              Set up in Finance Reports
-            </Link>
-          )}
+          <p className="text-gray-500 text-sm">No payment account has been set up for your team yet.</p>
         </div>
       ) : (
         <>
@@ -49,7 +60,12 @@ export default async function PaymentDetailsPage() {
                   </div>
                   <div>
                     <h3 className="font-semibold text-gray-900">{a.accountName}</h3>
-                    {a.bankName && <p className="text-xs text-gray-500">{a.bankName}</p>}
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      {a.team && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">{a.team.slug}</span>
+                      )}
+                      {a.bankName && <p className="text-xs text-gray-500">{a.bankName}</p>}
+                    </div>
                   </div>
                 </div>
 

@@ -14,6 +14,8 @@ export interface SessionRow {
   title: string | null
   status: string
   cancelNote: string | null
+  teamId: string | null
+  teamSlug: string | null
   presentCount: number
   absentCount: number
   excusedCount: number
@@ -21,9 +23,13 @@ export interface SessionRow {
   totalDevs: number
 }
 
+interface CaptainTeam { id: string; name: string; slug: string }
+
 interface Props {
   sessions: SessionRow[]
   isAdmin: boolean
+  canManage: boolean
+  captainTeams: CaptainTeam[]
 }
 
 // ─── Donut chart ──────────────────────────────────────────────────────────────
@@ -342,15 +348,29 @@ function StatusBadge({ status }: { status: string }) {
 
 const PAGE_SIZE = 10
 
-export function AttendanceClient({ sessions, isAdmin }: Props) {
+export function AttendanceClient({ sessions, isAdmin, canManage, captainTeams }: Props) {
   const router = useRouter()
 
   // ── Schedule modal state
   const [showSchedule, setShowSchedule] = useState(false)
   const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set())
   const [newTitle, setNewTitle] = useState('')
+  const [scheduleTeamId, setScheduleTeamId] = useState(
+    !isAdmin && captainTeams.length === 1 ? captainTeams[0].id : ''
+  )
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
+
+  // ── Team filter tabs
+  const [filterTeam, setFilterTeam] = useState<string>('all')
+  const teams = useMemo(() => {
+    const map = new Map<string, { id: string; slug: string }>()
+    sessions.forEach(s => { if (s.teamId && s.teamSlug) map.set(s.teamId, { id: s.teamId, slug: s.teamSlug }) })
+    return Array.from(map.values()).sort((a, b) => a.slug.localeCompare(b.slug))
+  }, [sessions])
+  const filteredSessions = useMemo(() =>
+    filterTeam === 'all' ? sessions : sessions.filter(s => s.teamId === filterTeam),
+  [sessions, filterTeam])
 
   // ── Cancel modal state
   const [cancelTarget, setCancelTarget] = useState<SessionRow | null>(null)
@@ -359,9 +379,9 @@ export function AttendanceClient({ sessions, isAdmin }: Props) {
 
   // ── Pagination
   const [page, setPage] = useState(1)
-  const totalPages = Math.max(1, Math.ceil(sessions.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(filteredSessions.length / PAGE_SIZE))
   const pageStart  = (page - 1) * PAGE_SIZE
-  const pageItems  = sessions.slice(pageStart, pageStart + PAGE_SIZE)
+  const pageItems  = filteredSessions.slice(pageStart, pageStart + PAGE_SIZE)
 
   // Already-scheduled dates for the calendar picker (grayed out)
   const alreadyScheduled = useMemo(() =>
@@ -380,7 +400,11 @@ export function AttendanceClient({ sessions, isAdmin }: Props) {
     setSelectedDates(prev => { const n = new Set(prev); n.delete(key); return n })
   }
 
-  function openSchedule() { setSelectedDates(new Set()); setNewTitle(''); setErrors([]); setShowSchedule(true) }
+  function openSchedule() {
+    setSelectedDates(new Set()); setNewTitle(''); setErrors([])
+    setScheduleTeamId(!isAdmin && captainTeams.length === 1 ? captainTeams[0].id : '')
+    setShowSchedule(true)
+  }
 
   async function scheduleSession() {
     if (!selectedDates.size) { setErrors(['Pick at least one date']); return }
@@ -391,7 +415,7 @@ export function AttendanceClient({ sessions, isAdmin }: Props) {
         fetch('/api/attendance/sessions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ date, title: newTitle || undefined }),
+          body: JSON.stringify({ date, title: newTitle || undefined, teamId: scheduleTeamId || undefined }),
         }).then(r => r.json().then(d => ({ ok: r.ok, date, data: d })))
       )
     )
@@ -439,15 +463,34 @@ export function AttendanceClient({ sessions, isAdmin }: Props) {
           <h1 className="page-title">Attendance</h1>
           <p className="text-sm text-gray-500 mt-0.5">Track PR session attendance for all developers</p>
         </div>
-        {isAdmin && (
+        {canManage && (
           <button className="btn-primary" onClick={openSchedule}>
             <Plus className="w-4 h-4" /> Schedule Sessions
           </button>
         )}
       </div>
 
+      {/* Team tabs */}
+      {teams.length > 1 && (
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => setFilterTeam('all')}
+            className={`px-4 py-1.5 text-sm rounded-lg border transition-colors ${filterTeam === 'all' ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+          >
+            All teams
+          </button>
+          {teams.map(t => (
+            <button key={t.id} onClick={() => setFilterTeam(t.id)}
+              className={`px-4 py-1.5 text-sm rounded-lg border transition-colors ${filterTeam === t.id ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+            >
+              {t.slug}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Charts */}
-      <ChartsSection sessions={sessions} />
+      <ChartsSection sessions={filteredSessions} />
 
       {/* ── Schedule modal ─────────────────────────────────────────────────────── */}
       {showSchedule && (
@@ -470,6 +513,23 @@ export function AttendanceClient({ sessions, isAdmin }: Props) {
                 </div>
               </div>
             )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Team</label>
+              {isAdmin ? (
+                <select value={scheduleTeamId} onChange={e => setScheduleTeamId(e.target.value)} className="input w-full">
+                  <option value="">Global (all developers)</option>
+                  {teams.map(t => <option key={t.id} value={t.id}>{t.slug}</option>)}
+                </select>
+              ) : captainTeams.length === 1 ? (
+                <input value={`${captainTeams[0].name} (${captainTeams[0].slug})`} className="input w-full bg-gray-50" disabled />
+              ) : (
+                <select value={scheduleTeamId} onChange={e => setScheduleTeamId(e.target.value)} className="input w-full">
+                  <option value="">Select team…</option>
+                  {captainTeams.map(t => <option key={t.id} value={t.id}>{t.name} ({t.slug})</option>)}
+                </select>
+              )}
+            </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -516,18 +576,18 @@ export function AttendanceClient({ sessions, isAdmin }: Props) {
       <div className="card">
         <div className="px-5 py-4 border-b border-gray-100 dark:border-white/10 flex items-center justify-between">
           <h2 className="font-semibold text-gray-900 dark:text-white">PR Sessions</h2>
-          {sessions.length > 0 && (
+          {filteredSessions.length > 0 && (
             <span className="text-xs text-gray-400">
-              {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, sessions.length)} of {sessions.length}
+              {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filteredSessions.length)} of {filteredSessions.length}
             </span>
           )}
         </div>
 
-        {sessions.length === 0 ? (
+        {filteredSessions.length === 0 ? (
           <div className="py-16 text-center">
             <CalendarDays className="w-10 h-10 text-gray-300 mx-auto mb-3" />
             <p className="text-gray-500 text-sm">No sessions scheduled yet.</p>
-            {isAdmin && (
+            {canManage && (
               <button className="mt-3 btn-primary text-sm" onClick={openSchedule}>
                 <Plus className="w-4 h-4" /> Schedule First Session
               </button>
@@ -556,6 +616,9 @@ export function AttendanceClient({ sessions, isAdmin }: Props) {
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-medium text-gray-900 dark:text-white text-sm">{s.title || 'PR Session'}</p>
                       <StatusBadge status={s.status} />
+                      {s.teamSlug && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">{s.teamSlug}</span>
+                      )}
                     </div>
                     {s.cancelNote && <p className="text-xs text-gray-500 mt-0.5">{s.cancelNote}</p>}
                     {s.status === 'SCHEDULED' && (
@@ -575,12 +638,12 @@ export function AttendanceClient({ sessions, isAdmin }: Props) {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 shrink-0">
-                    {isAdmin && s.status === 'SCHEDULED' && (
+                    {canManage && s.status === 'SCHEDULED' && (
                       <button onClick={() => { setCancelTarget(s); setCancelNote('') }} className="text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors">
                         Cancel
                       </button>
                     )}
-                    {isAdmin && s.status === 'CANCELLED' && (
+                    {canManage && s.status === 'CANCELLED' && (
                       <button onClick={() => restoreSession(s)} className="text-xs px-2.5 py-1 rounded-lg border border-green-200 text-green-600 hover:bg-green-50 transition-colors">
                         Restore
                       </button>

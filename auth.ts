@@ -21,7 +21,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       const name = user.name ?? login
       const avatarUrl = user.image ?? null
 
-      // Env-based admin bootstrap: comma-separated GitHub usernames get ADMIN (PR Owner)
+      // Env-based admin bootstrap: comma-separated GitHub usernames get ADMIN (PR Captain)
       const adminLogins = (process.env.ADMIN_GITHUB_LOGINS ?? '')
         .split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
       const isBootstrapAdmin = adminLogins.includes(login.toLowerCase())
@@ -69,17 +69,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return true
     },
 
-    async jwt({ token, user, account, trigger }) {
-      if (user || account || trigger === 'update') {
-        const email = token.email ?? (user as any)?.email
-        if (email) {
-          const dbUser = await db.user.findUnique({ where: { email } })
-          if (dbUser) {
-            token.id = dbUser.id
-            token.permissions = dbUser.permissions
-            token.developerId = dbUser.developerId
-            token.avatarUrl = dbUser.avatarUrl
-          }
+    async jwt({ token, user }) {
+      const email = token.email ?? (user as any)?.email
+      if (email) {
+        const dbUser = await db.user.findUnique({ where: { email } })
+        if (dbUser) {
+          token.id = dbUser.id
+          token.permissions = dbUser.permissions
+          token.developerId = dbUser.developerId
+          token.avatarUrl = dbUser.avatarUrl
         }
       }
       return token

@@ -1,7 +1,6 @@
 import { auth } from '@/auth'
 import { isAdmin, canViewFinance } from '@/lib/permissions'
-
-
+import { getUserTeamMemberships, captainTeamIds } from '@/lib/team-auth'
 import { db } from '@/lib/db'
 import { notFound } from 'next/navigation'
 import { formatCHF, formatDateTime, STATUS_COLORS, STATUS_LABELS } from '@/lib/utils'
@@ -33,19 +32,31 @@ export default async function ViolationDetailPage({ params }: { params: Promise<
 
   if (!v || v.deletedAt) notFound()
 
-  // Access control: admin & finance see all; a developer may only view their own violation
-  const isOwnViolation = !!user.developerId && v.developerId === user.developerId
-  if (!admin && !finance && !isOwnViolation) notFound()
+  const memberships = await getUserTeamMemberships(user.developerId)
+  const myCaptainTeams = captainTeamIds(memberships)
+  const isCaptainForViolation = myCaptainTeams.length > 0 && !!(
+    await db.teamMember.findFirst({ where: { developerId: v.developerId, teamId: { in: myCaptainTeams } } })
+  )
 
-  // Finance accounts shown to the developer so they know where to pay
+  // Access control: admin & finance see all; captain sees their team; developer sees own
+  const isOwnViolation = !!user.developerId && v.developerId === user.developerId
+  if (!admin && !finance && !isCaptainForViolation && !isOwnViolation) notFound()
+
+  // Show team-specific finance account (or global fallback) when developer needs to pay
   const financeAccounts = isOwnViolation && v.status === 'APPROVED'
-    ? await db.financeAccount.findMany({ orderBy: { createdAt: 'asc' } })
+    ? await db.financeAccount.findMany({
+        where: {
+          OR: [
+            { teamId: null },
+            { team: { members: { some: { developerId: v.developerId } } } },
+          ],
+        },
+        orderBy: { createdAt: 'asc' },
+      })
     : []
 
-  // Admin can always approve — BR-001 (self-approval block) is waived for admin
-  // since admin is the only role that can both report and approve
-  const canApprove = admin
-  const canSubmit = admin && v.status === 'DRAFT'
+  const canApprove = admin || isCaptainForViolation
+  const canSubmit = (admin || isCaptainForViolation) && v.status === 'DRAFT'
 
   return (
     <div className="max-w-4xl space-y-5">
@@ -89,10 +100,20 @@ export default async function ViolationDetailPage({ params }: { params: Promise<
                   </a>
                 </dd>
               </div>
-              {v.evidence && (
+              {v.evidenceImages.length > 0 && (
                 <div className="col-span-2">
-                  <dt className="text-xs font-medium text-gray-500 uppercase tracking-wider">Evidence</dt>
-                  <dd className="mt-0.5 text-gray-700 bg-gray-50 rounded-lg p-3 text-sm leading-relaxed">{v.evidence}</dd>
+                  <dt className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Evidence</dt>
+                  <dd className="grid grid-cols-3 gap-2">
+                    {v.evidenceImages.map((img, i) => (
+                      <a key={i} href={img} target="_blank" rel="noopener noreferrer">
+                        <img
+                          src={img}
+                          alt={`Evidence ${i + 1}`}
+                          className="w-full aspect-square object-cover rounded-lg hover:opacity-80 transition-opacity cursor-zoom-in"
+                        />
+                      </a>
+                    ))}
+                  </dd>
                 </div>
               )}
               {v.rejectionNote && (

@@ -38,6 +38,8 @@ export const authConfig = {
         if (isLoggedIn) return Response.redirect(new URL('/dashboard', nextUrl))
         return true
       }
+      // GitHub sync routes use their own Basic Auth — bypass session check
+      if (nextUrl.pathname.startsWith('/api/github/')) return true
       return isLoggedIn
     },
 

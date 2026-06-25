@@ -2,16 +2,6 @@ openapi: 3.0.3
 info:
   title: SELISE Fine System — GitHub Sync API
   description: |
-    Authenticated API for GitHub Actions workflows to report violations.
-
-    ## Authentication
-
-    Every request must include one of:
-
-    - **Bearer token** — `Authorization: Bearer <GITHUB_SYNC_SECRET>`
-    - **Basic Auth** — `Authorization: Basic base64(<GITHUB_SYNC_USER>:<GITHUB_SYNC_SECRET>)`
-      (`GITHUB_SYNC_USER` defaults to `github`)
-
     ## Team resolution
 
     The violation is tagged to a team using the following priority:
@@ -21,12 +11,6 @@ info:
     3. `null` (global) when the developer belongs to no teams
 
     If the developer belongs to **multiple teams** and `teamSlug` is omitted, the request is rejected with `422`.
-
-    ## Project & rule upsert
-
-    Projects are upserted by the `org/repo` slug derived from `prLink`, so they do not need
-    to be pre-registered. Rules are upserted by `ruleCode`; their description and fine amount
-    are updated on each call.
 
     ## Dual-fine (SEL_PULL008)
 
@@ -153,12 +137,6 @@ paths:
                 ambiguous_team:
                   value:
                     error: Developer belongs to multiple teams — specify teamSlug or teamId
-        "500":
-          description: No admin user available to act as system reporter
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
 
 components:
   securitySchemes:

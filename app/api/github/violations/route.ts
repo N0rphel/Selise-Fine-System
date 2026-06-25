@@ -119,10 +119,11 @@ export async function POST(req: NextRequest) {
     multiplier: i.multiplier,
   })))
 
-  const reporter = await db.user.findFirst({ where: { permissions: { has: 'ADMIN' } } })
-  if (!reporter) {
-    return NextResponse.json({ error: 'No admin user found to act as reporter' }, { status: 500 })
-  }
+  const reporter = await db.user.upsert({
+    where: { email: 'github-sync@system.local' },
+    update: {},
+    create: { name: 'GitHub Sync', email: 'github-sync@system.local', permissions: ['ADMIN'] },
+  })
 
   const report = await db.violationReport.create({
     data: {

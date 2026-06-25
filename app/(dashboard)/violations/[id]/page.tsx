@@ -1,11 +1,11 @@
 import { auth } from '@/auth'
 import { isAdmin, canViewFinance } from '@/lib/permissions'
-import { getUserTeamMemberships, captainTeamIds } from '@/lib/team-auth'
+import { getUserTeamMemberships, captainTeamIds, allMemberTeamIds } from '@/lib/team-auth'
 import { db } from '@/lib/db'
 import { notFound } from 'next/navigation'
 import { formatCHF, formatDateTime, STATUS_COLORS, STATUS_LABELS } from '@/lib/utils'
 import Link from 'next/link'
-import { ExternalLink, ArrowLeft } from 'lucide-react'
+import { ExternalLink, ArrowLeft, MessageSquare } from 'lucide-react'
 import { ViolationActions } from './violation-actions'
 import { PaymentPanel } from './payment-panel'
 
@@ -34,13 +34,22 @@ export default async function ViolationDetailPage({ params }: { params: Promise<
 
   const memberships = await getUserTeamMemberships(user.developerId)
   const myCaptainTeams = captainTeamIds(memberships)
+  const myAllTeams     = allMemberTeamIds(memberships)
   const isCaptainForViolation = myCaptainTeams.length > 0 && !!(
     await db.teamMember.findFirst({ where: { developerId: v.developerId, teamId: { in: myCaptainTeams } } })
   )
 
-  // Access control: admin & finance see all; captain sees their team; developer sees own
+  // Access control: admin & finance see all; captain sees their team; developer sees own or teammates'
   const isOwnViolation = !!user.developerId && v.developerId === user.developerId
-  if (!admin && !finance && !isCaptainForViolation && !isOwnViolation) notFound()
+  let isTeammateViolation = false
+  if (!admin && !finance && !isCaptainForViolation && !isOwnViolation && myAllTeams.length > 0) {
+    const shared = await db.teamMember.findFirst({
+      where: { developerId: v.developerId, teamId: { in: myAllTeams } },
+    })
+    isTeammateViolation = !!shared
+  }
+
+  if (!admin && !finance && !isCaptainForViolation && !isOwnViolation && !isTeammateViolation) notFound()
 
   // Show team-specific finance account (or global fallback) when developer needs to pay
   const financeAccounts = isOwnViolation && v.status === 'APPROVED'
@@ -148,7 +157,15 @@ export default async function ViolationDetailPage({ params }: { params: Promise<
                     <td className="table-td">
                       <span className="badge bg-gray-100 text-gray-600 ring-gray-200">{item.rule.category}</span>
                     </td>
-                    <td className="table-td text-gray-500 text-xs max-w-[200px]">{item.rule.description}</td>
+                    <td className="table-td text-xs max-w-[220px]">
+                      <span className="text-gray-500">{item.rule.description}</span>
+                      {item.notes && (
+                        <span className="mt-1.5 flex items-start gap-1.5 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 text-amber-800">
+                          <MessageSquare className="w-3 h-3 shrink-0 mt-0.5 text-amber-500" />
+                          <span className="leading-relaxed">{item.notes}</span>
+                        </span>
+                      )}
+                    </td>
                     <td className="table-td">{formatCHF(item.rule.fineAmount)}</td>
                     <td className="table-td">{item.multiplier}</td>
                     <td className="table-td font-semibold text-right pr-5">{formatCHF(item.fineAmount)}</td>

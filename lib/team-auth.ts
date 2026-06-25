@@ -32,6 +32,11 @@ export function financeTeamIds(m: TeamMembership[]): string[] {
   return m.filter(r => r.roles.includes('FINANCE') || r.roles.includes('CAPTAIN')).map(r => r.teamId)
 }
 
+// All team IDs the developer belongs to (any role, including plain MEMBER)
+export function allMemberTeamIds(m: TeamMembership[]): string[] {
+  return m.map(r => r.teamId)
+}
+
 // All developer IDs that are members of the given teams
 export async function getTeamDeveloperIds(teamIds: string[]): Promise<string[]> {
   if (!teamIds.length) return []

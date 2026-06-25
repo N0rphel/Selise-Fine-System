@@ -1,6 +1,6 @@
 import { auth } from '@/auth'
 import { isAdmin } from '@/lib/permissions'
-import { getUserTeamMemberships, visibleTeamIds, reporterTeamIds } from '@/lib/team-auth'
+import { getUserTeamMemberships, visibleTeamIds, reporterTeamIds, allMemberTeamIds } from '@/lib/team-auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { z } from 'zod'
@@ -34,13 +34,13 @@ export async function GET(req: NextRequest) {
 
   if (!isAdmin(permissions)) {
     const memberships = await getUserTeamMemberships(user.developerId)
-    const myTeamIds = visibleTeamIds(memberships)
+    const myAllTeams = allMemberTeamIds(memberships)
 
-    if (myTeamIds.length > 0) {
-      // CAPTAIN / REPORTER / FINANCE — see only violations tagged to their teams
-      where.teamId = { in: myTeamIds }
+    if (myAllTeams.length > 0) {
+      // Any team member sees all violations from their team(s)
+      where.teamId = { in: myAllTeams }
     } else {
-      // Plain MEMBER — own violations only (across all their teams)
+      // No team — own violations only
       where.developerId = user.developerId ?? '__no_linked_developer__'
     }
   }

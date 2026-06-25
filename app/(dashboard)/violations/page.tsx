@@ -1,7 +1,7 @@
 import { auth } from '@/auth'
 import { db } from '@/lib/db'
 import { isAdmin } from '@/lib/permissions'
-import { getUserTeamMemberships, reporterTeamIds, visibleTeamIds } from '@/lib/team-auth'
+import { getUserTeamMemberships, reporterTeamIds, visibleTeamIds, allMemberTeamIds } from '@/lib/team-auth'
 import { formatCHF, formatDate, STATUS_COLORS, STATUS_LABELS, PAYMENT_STATUS_COLORS, PAYMENT_STATUS_LABELS } from '@/lib/utils'
 import Link from 'next/link'
 import { Plus, ExternalLink } from 'lucide-react'
@@ -21,6 +21,7 @@ export default async function ViolationsPage({ searchParams }: Props) {
   const memberships = await getUserTeamMemberships(user.developerId)
   const myReporterTeams = reporterTeamIds(memberships)
   const myVisibleTeams  = visibleTeamIds(memberships)
+  const myAllTeams      = allMemberTeamIds(memberships)
   const canReport = admin || myReporterTeams.length > 0
 
   const where: any = { deletedAt: null }
@@ -28,12 +29,12 @@ export default async function ViolationsPage({ searchParams }: Props) {
   if (admin) {
     // Admin sees all; optional teamId filter narrows by teamId directly
     if (teamFilter) where.teamId = teamFilter
-  } else if (myVisibleTeams.length > 0) {
-    // CAPTAIN / REPORTER / FINANCE — see only violations tagged to their visible teams
-    const scope = (teamFilter && myVisibleTeams.includes(teamFilter)) ? [teamFilter] : myVisibleTeams
+  } else if (myAllTeams.length > 0) {
+    // Any team member (any role) sees all violations from their team(s)
+    const scope = (teamFilter && myAllTeams.includes(teamFilter)) ? [teamFilter] : myAllTeams
     where.teamId = { in: scope }
   } else {
-    // Plain MEMBER — own violations only
+    // No team at all — own violations only
     where.developerId = user.developerId ?? '__no_linked_developer__'
   }
 
@@ -41,9 +42,9 @@ export default async function ViolationsPage({ searchParams }: Props) {
   if (projectId) where.projectId = projectId
 
   // Load teams for filter tabs (non-admin multi-team users)
-  const myTeamObjects = (!admin && myVisibleTeams.length > 1)
+  const myTeamObjects = (!admin && myAllTeams.length > 1)
     ? await db.team.findMany({
-        where: { id: { in: myVisibleTeams }, deletedAt: null },
+        where: { id: { in: myAllTeams }, deletedAt: null },
         select: { id: true, name: true, slug: true },
         orderBy: { name: 'asc' },
       })
